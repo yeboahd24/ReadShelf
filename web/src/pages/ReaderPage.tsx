@@ -198,29 +198,51 @@ export default function ReaderPage() {
 
         {sidebarOpen && (
           <div className="annotation-sidebar">
-            <h3>Annotations ({annotations.length})</h3>
+            <div className="sidebar-header">
+              <h3>Annotations</h3>
+              {annotations.length > 0 && (
+                <div className="sidebar-stats">
+                  <div className="sidebar-stat">
+                    <span className="sidebar-stat-num stat-all">{annotations.length}</span>
+                    <span className="sidebar-stat-label">Total</span>
+                  </div>
+                  <div className="sidebar-stat">
+                    <span className="sidebar-stat-num stat-hl">{annotations.filter(a => a.type === 'highlight').length}</span>
+                    <span className="sidebar-stat-label">Highlights</span>
+                  </div>
+                  <div className="sidebar-stat">
+                    <span className="sidebar-stat-num stat-st">{annotations.filter(a => a.type === 'strikethrough').length}</span>
+                    <span className="sidebar-stat-label">Strikes</span>
+                  </div>
+                </div>
+              )}
+            </div>
             {annotations.length === 0 ? (
-              <p className="empty-state">Select text to annotate.</p>
+              <div className="sidebar-empty">
+                <div className="sidebar-empty-icon">&#9998;</div>
+                <p>Select text in the PDF to create your first annotation.</p>
+              </div>
             ) : (
-              annotations.map((a) => (
-                <AnnotationCard
-                  key={a.id}
-                  annotation={a}
-                  onDelete={() => handleDeleteAnnotation(a.id)}
-                  onUpdateNote={(note) => handleUpdateNote(a.id, note)}
-                  onScrollTo={() => {
-                    const viewer = viewerRef.current;
-                    const el = viewer?.querySelector(
-                      `[data-page-number="${a.page}"]`
-                    ) as HTMLElement | null;
-                    if (el && viewer) {
-                      // Scroll within the pdf-viewer container.
-                      const offset = el.offsetTop - viewer.offsetTop;
-                      viewer.scrollTo({ top: offset, behavior: 'smooth' });
-                    }
-                  }}
-                />
-              ))
+              <div className="sidebar-list">
+                {annotations.map((a) => (
+                  <AnnotationCard
+                    key={a.id}
+                    annotation={a}
+                    onDelete={() => handleDeleteAnnotation(a.id)}
+                    onUpdateNote={(note) => handleUpdateNote(a.id, note)}
+                    onScrollTo={() => {
+                      const viewer = viewerRef.current;
+                      const el = viewer?.querySelector(
+                        `[data-page-number="${a.page}"]`
+                      ) as HTMLElement | null;
+                      if (el && viewer) {
+                        const offset = el.offsetTop - viewer.offsetTop;
+                        viewer.scrollTo({ top: offset, behavior: 'smooth' });
+                      }
+                    }}
+                  />
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -231,8 +253,12 @@ export default function ReaderPage() {
           className="annotation-toolbar"
           style={{ top: selection.position.top, left: selection.position.left }}
         >
-          <button onClick={() => handleAnnotate('highlight')}>Highlight</button>
-          <button onClick={() => handleAnnotate('strikethrough')}>Strikethrough</button>
+          <button className="toolbar-highlight" onClick={() => handleAnnotate('highlight')}>
+            <span className="toolbar-icon">&#9998;</span> Highlight
+          </button>
+          <button className="toolbar-strikethrough" onClick={() => handleAnnotate('strikethrough')}>
+            <span className="toolbar-icon">&#9473;</span> Strikethrough
+          </button>
         </div>
       )}
     </div>
@@ -404,32 +430,43 @@ function AnnotationCard({
   };
 
   return (
-    <div className="annotation-card clickable" onClick={onScrollTo}>
-      <div className="annotation-header">
-        <span className={`badge badge-${annotation.type}`}>{annotation.type}</span>
-        <span className="annotation-page">p.{annotation.page}</span>
-        <button className="btn-delete-sm" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">×</button>
+    <div
+      className={`ann-card ann-card-${annotation.type}`}
+      onClick={onScrollTo}
+    >
+      <div className="ann-card-top">
+        <span className={`ann-badge ann-badge-${annotation.type}`}>
+          {annotation.type === 'highlight' ? '✦ Highlight' : '— Strikethrough'}
+        </span>
+        <span className="ann-card-page">p. {annotation.page}</span>
+        <button
+          className="ann-card-delete"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title="Delete"
+        >
+          ×
+        </button>
       </div>
-      <p className="annotation-content">{annotation.content}</p>
+      <p className="ann-card-text">{annotation.content}</p>
       {editing ? (
-        <div className="note-editor">
+        <div className="ann-note-editor" onClick={(e) => e.stopPropagation()}>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Add a note..."
+            placeholder="Why does this matter to you?"
             rows={2}
           />
-          <div>
-            <button onClick={saveNote}>Save</button>
+          <div className="ann-note-actions">
+            <button className="ann-note-save" onClick={saveNote}>Save</button>
             <button onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </div>
       ) : (
-        <div className="note-display" onClick={() => setEditing(true)}>
+        <div className="ann-note-display" onClick={(e) => { e.stopPropagation(); setEditing(true); }}>
           {annotation.user_note ? (
-            <p className="note-text">{annotation.user_note}</p>
+            <p className="ann-note-text">"{annotation.user_note}"</p>
           ) : (
-            <p className="note-placeholder">+ Add note</p>
+            <p className="ann-note-add">+ Add note</p>
           )}
         </div>
       )}
