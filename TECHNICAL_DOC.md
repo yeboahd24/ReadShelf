@@ -114,53 +114,12 @@ CREATE TABLE annotations (
   type          TEXT NOT NULL,        -- 'highlight' | 'strikethrough'
   content       TEXT NOT NULL,        -- selected text
   page          INT NOT NULL,
-  chapter       TEXT,                 -- e.g. "Chapter 3: Go's Concurrency Model"
-  user_note     TEXT,                 -- optional personal memo ("why I flagged this")
-  char_start    INT,                  -- start offset in the PDF.js text layer
-  char_end      INT,                  -- end offset in the PDF.js text layer
-  rects         JSONB,                -- serialized quadrilaterals for precise re-rendering
+  char_offset   INT,                  -- position in page text layer
   embedding     vector(1536),         -- pgvector: for AI recall
   created_at    TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX ON annotations USING ivfflat (embedding vector_cosine_ops);
-```
-
-> **Why `rects`:** `window.getSelection()` returns reconstructed text that can be dirty (broken lines, extra spaces). Storing the serialized bounding boxes of the selection allows highlights to re-render precisely at any zoom level or screen resolution, independent of the text layer reconstruction.
-
-### collections
-```sql
-CREATE TABLE collections (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
-  name        TEXT NOT NULL,           -- e.g. "Concurrency Patterns"
-  description TEXT,
-  is_smart    BOOLEAN DEFAULT false,   -- true = auto-populated via vector search
-  query       TEXT,                    -- seed query for smart collections (V2)
-  created_at  TIMESTAMPTZ DEFAULT now()
-);
-```
-
-### collection_annotations
-```sql
-CREATE TABLE collection_annotations (
-  collection_id UUID REFERENCES collections(id) ON DELETE CASCADE,
-  annotation_id UUID REFERENCES annotations(id) ON DELETE CASCADE,
-  added_at      TIMESTAMPTZ DEFAULT now(),
-  PRIMARY KEY (collection_id, annotation_id)
-);
-```
-
-### book_chapters
-Populated once at upload time by parsing the PDF table of contents.
-```sql
-CREATE TABLE book_chapters (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  book_id    UUID REFERENCES books(id) ON DELETE CASCADE,
-  title      TEXT NOT NULL,           -- "Chapter 3: Go's Concurrency Model"
-  start_page INT NOT NULL,
-  end_page   INT
-);
 ```
 
 ---
@@ -190,16 +149,6 @@ DELETE /api/annotations/:id         — delete annotation
 GET    /api/annotations/search?q=   — cross-book full-text search
 ```
 
-```
-POST   /api/collections                      — create collection
-GET    /api/collections                      — list all user collections
-GET    /api/collections/:id                  — get collection + annotations
-DELETE /api/collections/:id                  — delete collection
-POST   /api/collections/:id/annotations      — add annotation to collection
-DELETE /api/collections/:id/annotations/:aid — remove annotation from collection
-POST   /api/collections/:id/populate         — V2: auto-populate smart collection via vector search
-```
-
 ### AI Recall
 ```
 POST   /api/recall             — natural language query over user's highlights
@@ -215,10 +164,10 @@ PDF.js renders each page as a canvas layer with a transparent text layer on top.
 
 **Capture flow:**
 1. User selects text in the PDF viewer — the browser fires a `selectionchange` event.
-2. A floating toolbar appears (highlight / strikethrough buttons) plus an optional one-line text input: *"Add a note — why did you flag this?"*
-3. On action, the frontend reads `window.getSelection()` to get the selected text, determines the current page number from the PDF.js page viewer state, and looks up the chapter heading by matching the page number against the book's parsed chapter map (loaded into memory when the book opens).
-4. The annotation is sent to the Go API with: `{ type, content, page, chapter, userNote, bookId }`.
-5. The API saves it to PostgreSQL and asynchronously generates an embedding via the embeddings API. The embedded text includes the chapter and user note alongside the highlight content — making the vector richer and recall answers more precise.
+2. A floating toolbar appears (highlight / strikethrough buttons).
+3. On action, the frontend reads `window.getSelection()` to get the selected text and determines the current page number from the PDF.js page viewer state.
+4. The annotation is sent to the Go API with: `{ type, content, page, bookId }`.
+5. The API saves it to PostgreSQL and asynchronously generates an embedding via the Claude API, storing the vector in pgvector.
 
 **Key challenge:** PDF.js text layer spans don't always map 1:1 to visible text — especially in multi-column or scanned PDFs. For MVP, handle clean single-column PDFs first and add robustness later.
 
@@ -325,25 +274,7 @@ This structure makes it straightforward to swap PostgreSQL for another DB, or re
 
 ---
 
-## 10. Collections
-
-Collections allow users to organise annotations across books into named folders or topics — breaking out of the per-book view into a knowledge-first view.
-
-**Two modes:**
-
-Manual collections are user-curated. The user creates a collection (e.g. "Concurrency Patterns") and explicitly adds highlights to it from any book. This is a simple many-to-many relationship between annotations and collections.
-
-Smart collections are vector-powered (V2). The user names a topic and the system runs a similarity search across all their annotation embeddings to auto-populate the collection with the most semantically relevant highlights. The user can then curate from the result.
-
-**Subdomain placement:** Collections live within the Annotation core subdomain. A `CollectionService` in `core/service/` depends only on the `AnnotationRepo` and `Embedder` outbound ports already defined — no new external dependencies.
-
-**MVP vs V2:**
-- V1 — manual collections (tagging UI, add/remove annotations)
-- V2 — smart collections (auto-populate via vector search, alongside layered annotations)
-
----
-
-## 11. File Upload Flow
+## 10. File Upload Flow
 
 1. Frontend sends `multipart/form-data` POST to `/api/books`
 2. Go handler validates file type (PDF only) and size limit (50MB free / 200MB pro)
@@ -392,43 +323,7 @@ Monetisation milestone: 200 pro users = $1,400 MRR. Target: developer audience g
 
 ---
 
-## 14. Annotation Edge Cases
-
-These rules live in the domain layer (`internal/core/domain/annotation.go`) and are enforced by `AnnotationList` before any persistence occurs.
-
-### Edge case 1 — Duplicate annotation (debounce)
-
-Two annotations on the same passage are allowed only if they carry different `user_note` values. An exact duplicate — same `content`, same `page`, same `type`, same `book_id` — created within a 30-second window is rejected as an accidental double-submit.
-
-**Rule:** if `content + page + type` match an existing annotation and `createdAt` delta < 30s → return `ErrDuplicateAnnotation` (HTTP 409).
-
-### Edge case 2 — Conflicting annotation type at the same offset
-
-A highlight and a strikethrough cannot coexist on the same `char_start`/`char_end` range and `page`. If a user strikethroughs text they previously highlighted (or vice versa), the later annotation wins and the earlier one is automatically deleted before the new one is saved.
-
-**Rule:** if `char_start + char_end + page` match an existing annotation of the opposite type → delete the existing annotation, then save the incoming one.
-
-> **V2 note:** This "winner takes all" rule is intentionally simple for MVP. A common real-world case is highlighting a paragraph then striking a single sentence within it — partial overlaps. In V2, annotations will be treated as independent layers allowing nested and overlapping ranges without conflict resolution.
-
-### Edge case 3 — User note added after the fact
-
-A user may return to their annotation list and add or edit a `user_note` long after the annotation was created. This is a valid and expected flow. When a note is updated, the annotation's embedding is cleared and regenerated to reflect the richer context.
-
-**Rule:** `PATCH /api/annotations/:id/note` → update `user_note`, clear `embedding`, trigger background re-embed using `chapter + content + user_note` as the composite embed text.
-
-### Embed text composition
-
-Regardless of whether it is a new annotation or a re-embed after a note update, the text sent to the embeddings API is always composed as:
-
-```
-"{book_title} | {chapter} | {content} | {user_note}"
-```
-
-Missing fields are omitted. The book title is included so cross-book recall queries like *"What did Designing Data-Intensive Applications say about replication?"* match correctly by title, not just by semantic content. This is the single source of truth defined on the `Annotation` domain struct via `EmbedText()`.
-
----
-
-## 15. Key Technical Risks
+## 14. Key Technical Risks
 
 | Risk | Mitigation |
 |---|---|
