@@ -44,6 +44,7 @@ func NewRouter(
 			protected.Get("/books", bookH.List)
 			protected.Post("/books", bookH.Upload)
 			protected.Get("/books/{id}", bookH.Get)
+			protected.Get("/books/{id}/url", bookH.GetURL)
 			protected.Delete("/books/{id}", bookH.Delete)
 
 			// Annotations.

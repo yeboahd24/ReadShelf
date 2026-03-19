@@ -34,6 +34,12 @@ type Config struct {
 	// HuggingFace (Nomic)
 	HuggingFaceAPIKey string
 
+	// AI provider: "groq" or "claude"
+	AIProvider string
+
+	// Groq
+	GroqAPIKey string
+
 	// Claude
 	ClaudeAPIKey string
 }
@@ -62,7 +68,10 @@ func Load() (*Config, error) {
 
 		EmbedderProvider:  getEnv("EMBEDDER_PROVIDER", "nomic"),
 		HuggingFaceAPIKey: os.Getenv("HUGGINGFACE_API_KEY"),
-		ClaudeAPIKey:      os.Getenv("CLAUDE_API_KEY"),
+
+		AIProvider:   getEnv("AI_PROVIDER", "groq"),
+		GroqAPIKey:   os.Getenv("GROQ_API_KEY"),
+		ClaudeAPIKey: os.Getenv("CLAUDE_API_KEY"),
 	}
 
 	if cfg.DatabaseURL == "" {

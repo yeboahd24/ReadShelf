@@ -56,6 +56,7 @@ func (s *recallService) Query(ctx context.Context, userID uuid.UUID, query strin
 	for i, m := range matches {
 		sources[i] = inbound.RecallSource{
 			AnnotationID: m.ID.String(),
+			BookID:       m.BookID.String(),
 			BookTitle:    m.BookTitle,
 			Page:         m.Page,
 			Content:      m.Content,

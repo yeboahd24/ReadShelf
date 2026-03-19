@@ -56,7 +56,11 @@ func (h *BookHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	title := r.FormValue("title")
 	if title == "" {
-		title = strings.TrimSuffix(header.Filename, ".pdf")
+		// Clean filename: remove extension, replace dots/underscores/hyphens with spaces.
+		name := header.Filename
+		name = strings.TrimSuffix(strings.TrimSuffix(name, ".pdf"), ".PDF")
+		name = strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(name)
+		title = strings.TrimSpace(name)
 	}
 	author := r.FormValue("author")
 
@@ -84,6 +88,23 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.JSON(w, http.StatusOK, book)
+}
+
+func (h *BookHandler) GetURL(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromCtx(r.Context())
+	bookID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+
+	url, err := h.books.GetSignedURL(r.Context(), userID, bookID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	httputil.JSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
 func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {

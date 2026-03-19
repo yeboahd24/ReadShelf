@@ -14,6 +14,7 @@ import (
 	"github.com/dominic/readshelf/internal/adapter/inbound/http/handler"
 	"github.com/dominic/readshelf/internal/adapter/outbound/claude"
 	"github.com/dominic/readshelf/internal/adapter/outbound/cloudinary"
+	"github.com/dominic/readshelf/internal/adapter/outbound/groq"
 	"github.com/dominic/readshelf/internal/adapter/outbound/nomic"
 	"github.com/dominic/readshelf/internal/adapter/outbound/postgres"
 	"github.com/dominic/readshelf/internal/adapter/outbound/r2"
@@ -71,8 +72,18 @@ func main() {
 		log.Fatalf("unknown EMBEDDER_PROVIDER: %s (must be 'nomic' or 'claude')", cfg.EmbedderProvider)
 	}
 
-	// AI client (always Claude for recall).
-	aiClient := claude.NewAIClient(cfg.ClaudeAPIKey)
+	// AI client — swappable via AI_PROVIDER env var.
+	var aiClient outbound.AIClient
+	switch cfg.AIProvider {
+	case "groq":
+		aiClient = groq.NewAIClient(cfg.GroqAPIKey)
+		log.Println("using Groq (Llama 3.3 70B) for AI recall")
+	case "claude":
+		aiClient = claude.NewAIClient(cfg.ClaudeAPIKey)
+		log.Println("using Claude for AI recall")
+	default:
+		log.Fatalf("unknown AI_PROVIDER: %s (must be 'groq' or 'claude')", cfg.AIProvider)
+	}
 
 	// Services.
 	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret)
@@ -94,7 +105,7 @@ func main() {
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
